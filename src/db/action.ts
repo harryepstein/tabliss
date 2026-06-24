@@ -2,7 +2,13 @@ import { nanoid } from "nanoid";
 import { DB } from "../lib";
 import migrateFrom2 from "./migrations/migrate2";
 import { selectWidgets } from "./select";
-import { cache, db, WidgetDisplay } from "./state";
+import {
+  AquariumConfig,
+  cache,
+  db,
+  defaultAquarium,
+  WidgetDisplay,
+} from "./state";
 
 export const createId = (): string => nanoid(12);
 
@@ -70,6 +76,12 @@ export const setWidgetDisplay = (
 /** Toggle dashboard focus mode */
 export const toggleFocus = () => {
   DB.put(db, "focus", !DB.get(db, "focus"));
+};
+
+/** Update the aquarium (swimming widgets) configuration */
+export const setAquarium = (patch: Partial<AquariumConfig>): void => {
+  const current = DB.get(db, "aquarium") ?? defaultAquarium;
+  DB.put(db, "aquarium", { ...current, ...patch });
 };
 
 // Store actions

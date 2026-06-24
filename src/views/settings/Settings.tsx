@@ -5,6 +5,7 @@ import { exportStore, importStore, resetStore } from "../../db/action";
 import { useKeyPress } from "../../hooks";
 import { Icon } from "../shared";
 import Logo from "../shared/Logo";
+import Aquarium from "./Aquarium";
 import Background from "./Background";
 import Persist from "./Persist";
 import "./Settings.sass";
@@ -81,6 +82,8 @@ const Settings: React.FC = () => {
         <Background />
 
         <Widgets />
+
+        <Aquarium />
 
         <System />
 
