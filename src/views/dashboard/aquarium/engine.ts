@@ -65,10 +65,16 @@ export type Fish = {
   // Interaction state.
   hover: boolean;
   focused: boolean;
+  /** Sticky summon, toggled by tapping on touch devices */
+  pinned: boolean;
   /** Current summon amount, 0..1 (eased) */
   engage: number;
   /** Summon target, 0 or 1 */
   engageTarget: number;
+  // Last values written to the DOM, so unchanged styles are not rewritten.
+  lastBlur: number;
+  lastOpacity: number;
+  lastZIndex: number;
 };
 
 const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
@@ -97,8 +103,12 @@ export function seedFish(id: string, position: WidgetPosition): Fish {
     zSeed: Math.random(),
     hover: false,
     focused: false,
+    pinned: false,
     engage: 0,
     engageTarget: 0,
+    lastBlur: -1,
+    lastOpacity: -1,
+    lastZIndex: -1,
   };
 }
 
@@ -170,8 +180,11 @@ export function step(
   f.heading %= TAU;
 
   // Swim forward: constant speed, slowed by depth (parallax) and stilled while
-  // summoned so the widget holds steady to be read.
-  const swim = cfg.speed * lerp(0.45, 1, f.z) * (1 - f.engage);
+  // summoned so the widget holds steady to be read. Gating on the target (not
+  // the eased value) freezes the widget the instant it is summoned, so it does
+  // not drift out from under the pointer while the rest of the summon eases in.
+  const swim =
+    cfg.speed * lerp(0.45, 1, f.z) * (f.engageTarget ? 0 : 1 - f.engage);
   f.x += Math.cos(f.heading) * swim * dt;
   f.y += Math.sin(f.heading) * swim * dt;
 
@@ -191,17 +204,36 @@ export function applyFish(
   const intro = clamp((t - f.born) * 1.6, 0, 1);
 
   const depthScale = lerp(1 - par * 0.55, 1.04, f.z);
-  const scale = depthScale * (1 + 0.1 * f.engage) * lerp(0.9, 1, intro);
+  const scale = depthScale * (1 + 0.06 * f.engage) * lerp(0.9, 1, intro);
   const opacity = lerp(1 - par * 0.5, 1, f.z) * intro;
   const blur = (1 - f.z) * par * 2 * (1 - f.engage);
   const zIndex = 1 + Math.round(f.z * 200) + Math.round(f.engage * 500);
 
+  // Position changes essentially every frame, so always rewrite the transform.
   const tx = f.x - f.w / 2;
   const ty = f.y - f.h / 2;
   el.style.transform = `translate3d(${tx.toFixed(2)}px, ${ty.toFixed(2)}px, 0) scale(${scale.toFixed(3)})`;
-  el.style.opacity = opacity.toFixed(3);
-  el.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : "";
-  el.style.zIndex = String(zIndex);
+
+  // Opacity, blur and z-index change slowly (or rarely). Quantise them and only
+  // write when the value actually changes. This matters most for blur: an
+  // animated filter re-rasterises the layer every frame, so collapsing it to a
+  // few discrete levels keeps each rasterised layer reusable across frames.
+  const qOpacity = Math.round(opacity * 100) / 100;
+  if (qOpacity !== f.lastOpacity) {
+    el.style.opacity = qOpacity.toFixed(2);
+    f.lastOpacity = qOpacity;
+  }
+
+  const qBlur = blur > 0.05 ? Math.round(blur * 4) / 4 : 0;
+  if (qBlur !== f.lastBlur) {
+    el.style.filter = qBlur > 0 ? `blur(${qBlur}px)` : "";
+    f.lastBlur = qBlur;
+  }
+
+  if (zIndex !== f.lastZIndex) {
+    el.style.zIndex = String(zIndex);
+    f.lastZIndex = zIndex;
+  }
 }
 
 /**

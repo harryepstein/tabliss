@@ -40,7 +40,18 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
   const configRef = React.useRef(config);
   configRef.current = config;
 
-  const reduced = React.useMemo(prefersReducedMotion, []);
+  // Reduced motion, kept reactive so toggling the OS setting mid-session
+  // immediately starts or stops the swimming.
+  const [reduced, setReduced] = React.useState(prefersReducedMotion);
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+      return;
+    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(mql.matches);
+    onChange();
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
 
   const ids = widgets.map((w) => w.id).join(",");
 
@@ -114,18 +125,30 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
     return cb;
   };
 
+  const refreshEngage = (fish: Fish) => {
+    fish.engageTarget = fish.hover || fish.focused || fish.pinned ? 1 : 0;
+  };
   const setHover = (id: string, value: boolean) => {
     const fish = fishes.current.get(id);
     if (fish) {
       fish.hover = value;
-      fish.engageTarget = fish.hover || fish.focused ? 1 : 0;
+      refreshEngage(fish);
     }
   };
   const setFocused = (id: string, value: boolean) => {
     const fish = fishes.current.get(id);
     if (fish) {
       fish.focused = value;
-      fish.engageTarget = fish.hover || fish.focused ? 1 : 0;
+      refreshEngage(fish);
+    }
+  };
+  // Touch has no hover: a tap pins a widget still (and another tap releases it),
+  // so it can be read or used without chasing a moving target.
+  const togglePin = (id: string) => {
+    const fish = fishes.current.get(id);
+    if (fish) {
+      fish.pinned = !fish.pinned;
+      refreshEngage(fish);
     }
   };
 
@@ -136,6 +159,12 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
     if (!container) return;
 
     if (reduced) {
+      // Clear inline styles the animated path may have left behind, so the
+      // .is-still CSS (transform via --fish-scale) takes over cleanly.
+      elements.current.forEach((el) => {
+        el.style.transform = "";
+        el.style.filter = "";
+      });
       const layout = () => {
         const W = container.clientWidth;
         const H = container.clientHeight;
@@ -153,6 +182,19 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
         relayoutStill.current = null;
       };
     }
+
+    // Clear inline left/top the static path may have set, so the animated
+    // transform is measured from the element's natural top-left origin. Reset
+    // the per-fish style caches so the first frame repaints opacity/blur/z.
+    elements.current.forEach((el) => {
+      el.style.left = "";
+      el.style.top = "";
+    });
+    fishes.current.forEach((fish) => {
+      fish.lastBlur = -1;
+      fish.lastOpacity = -1;
+      fish.lastZIndex = -1;
+    });
 
     let raf = 0;
     let last = performance.now();
@@ -188,9 +230,15 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
           key={id}
           ref={getRef(id)}
           className="Fish"
-          onPointerEnter={() => setHover(id, true)}
-          onPointerLeave={() => setHover(id, false)}
-          onPointerDown={() => setHover(id, true)}
+          onPointerEnter={(e) => {
+            if (e.pointerType === "mouse") setHover(id, true);
+          }}
+          onPointerLeave={(e) => {
+            if (e.pointerType === "mouse") setHover(id, false);
+          }}
+          onPointerDown={(e) => {
+            if (e.pointerType !== "mouse") togglePin(id);
+          }}
           onFocusCapture={() => setFocused(id, true)}
           onBlurCapture={() => setFocused(id, false)}
         >
