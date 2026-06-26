@@ -4,14 +4,7 @@ import { getConfig } from "../../../plugins";
 import Plugin from "../../shared/Plugin";
 import Widget from "../Widget";
 import "./Aquarium.sass";
-import {
-  applyFish,
-  applyStill,
-  Fish,
-  prefersReducedMotion,
-  seedFish,
-  step,
-} from "./engine";
+import { applyFish, Fish, seedFish, step } from "./engine";
 
 type Props = {
   widgets: WidgetState[];
@@ -34,24 +27,10 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
   const refCallbacks = React.useRef(
     new Map<string, (el: HTMLDivElement | null) => void>(),
   );
-  const relayoutStill = React.useRef<(() => void) | null>(null);
 
   // Live config for the animation loop, without restarting it.
   const configRef = React.useRef(config);
   configRef.current = config;
-
-  // Reduced motion, kept reactive so toggling the OS setting mid-session
-  // immediately starts or stops the swimming.
-  const [reduced, setReduced] = React.useState(prefersReducedMotion);
-  React.useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-      return;
-    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const onChange = () => setReduced(mql.matches);
-    onChange();
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
 
   const ids = widgets.map((w) => w.id).join(",");
 
@@ -73,8 +52,6 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
         refCallbacks.current.delete(id);
       }
     }
-    // Re-place static fish if the set changed under reduced motion.
-    relayoutStill.current?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids]);
 
@@ -152,49 +129,10 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
     }
   };
 
-  // The simulation: a rAF loop while animated, or a static layout pass when the
-  // user prefers reduced motion.
+  // The simulation: a single requestAnimationFrame loop drives every fish.
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    if (reduced) {
-      // Clear inline styles the animated path may have left behind, so the
-      // .is-still CSS (transform via --fish-scale) takes over cleanly.
-      elements.current.forEach((el) => {
-        el.style.transform = "";
-        el.style.filter = "";
-      });
-      const layout = () => {
-        const W = container.clientWidth;
-        const H = container.clientHeight;
-        fishes.current.forEach((fish) => {
-          const el = elements.current.get(fish.id);
-          if (el) applyStill(el, fish, configRef.current, W, H);
-        });
-      };
-      relayoutStill.current = layout;
-      layout();
-      const ro = new ResizeObserver(layout);
-      ro.observe(container);
-      return () => {
-        ro.disconnect();
-        relayoutStill.current = null;
-      };
-    }
-
-    // Clear inline left/top the static path may have set, so the animated
-    // transform is measured from the element's natural top-left origin. Reset
-    // the per-fish style caches so the first frame repaints opacity/blur/z.
-    elements.current.forEach((el) => {
-      el.style.left = "";
-      el.style.top = "";
-    });
-    fishes.current.forEach((fish) => {
-      fish.lastBlur = -1;
-      fish.lastOpacity = -1;
-      fish.lastZIndex = -1;
-    });
 
     let raf = 0;
     let last = performance.now();
@@ -216,15 +154,10 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [reduced]);
-
-  // Re-place static fish when the config changes under reduced motion.
-  React.useEffect(() => {
-    if (reduced) relayoutStill.current?.();
-  }, [reduced, config]);
+  }, []);
 
   return (
-    <div ref={containerRef} className={`Aquarium${reduced ? " is-still" : ""}`}>
+    <div ref={containerRef} className="Aquarium">
       {widgets.map(({ display, id, key }) => (
         <div
           key={id}

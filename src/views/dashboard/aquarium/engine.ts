@@ -60,8 +60,6 @@ export type Fish = {
   f2: number;
   zPhase: number;
   zFreq: number;
-  /** Static depth used by the reduced-motion layout */
-  zSeed: number;
   // Interaction state.
   hover: boolean;
   focused: boolean;
@@ -99,8 +97,9 @@ export function seedFish(id: string, position: WidgetPosition): Fish {
     f1: rand(0.08, 0.18),
     f2: rand(0.13, 0.27),
     zPhase: rand(0, TAU),
-    zFreq: rand(0.05, 0.12),
-    zSeed: Math.random(),
+    // Depth oscillation: ~16-31s per near<->far cycle, so the change is
+    // actually perceptible rather than taking minutes.
+    zFreq: rand(0.2, 0.4),
     hover: false,
     focused: false,
     pinned: false,
@@ -203,10 +202,12 @@ export function applyFish(
   const par = clamp(cfg.depth / 1280, 0, 0.85);
   const intro = clamp((t - f.born) * 1.6, 0, 1);
 
-  const depthScale = lerp(1 - par * 0.55, 1.04, f.z);
+  // Depth parallax. Near (z->1): large, sharp, fully opaque, drawn on top.
+  // Far (z->0): noticeably smaller, dimmer and blurred, so the tank reads as 3D.
+  const depthScale = lerp(1 - par * 0.85, 1.08, f.z);
   const scale = depthScale * (1 + 0.06 * f.engage) * lerp(0.9, 1, intro);
-  const opacity = lerp(1 - par * 0.5, 1, f.z) * intro;
-  const blur = (1 - f.z) * par * 2 * (1 - f.engage);
+  const opacity = lerp(1 - par * 0.8, 1, f.z) * intro;
+  const blur = (1 - f.z) * par * 4.5 * (1 - f.engage);
   const zIndex = 1 + Math.round(f.z * 200) + Math.round(f.engage * 500);
 
   // Position changes essentially every frame, so always rewrite the transform.
@@ -234,35 +235,4 @@ export function applyFish(
     el.style.zIndex = String(zIndex);
     f.lastZIndex = zIndex;
   }
-}
-
-/**
- * Reduced-motion layout: place each fish statically at its anchor with a fixed
- * depth. Positioning uses left/top so the stylesheet's `:hover` scale (and its
- * transition) can take over — no animation loop runs.
- */
-export function applyStill(
-  el: HTMLElement,
-  f: Fish,
-  cfg: AquariumConfig,
-  W: number,
-  H: number,
-): void {
-  const par = clamp(cfg.depth / 1280, 0, 0.85);
-  const z = 0.55 + 0.4 * f.zSeed;
-  const scale = lerp(1 - par * 0.55, 1.04, z);
-  const opacity = lerp(1 - par * 0.5, 1, z);
-  el.style.left = `${(f.anchorX * W).toFixed(1)}px`;
-  el.style.top = `${(f.anchorY * H).toFixed(1)}px`;
-  el.style.setProperty("--fish-scale", scale.toFixed(3));
-  el.style.opacity = opacity.toFixed(3);
-  el.style.zIndex = String(1 + Math.round(z * 200));
-}
-
-export function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }

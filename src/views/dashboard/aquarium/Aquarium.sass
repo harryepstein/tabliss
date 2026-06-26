@@ -18,16 +18,3 @@
     will-change: transform, opacity
     // The animation loop owns transform/opacity here; no CSS transition so it
     // never fights the per-frame writes.
-
-  // Reduced-motion: widgets sit still at their anchors and only respond to
-  // hover, with a gentle transition the loop would otherwise stomp on.
-  &.is-still
-    .Fish
-      transform: translate(-50%, -50%) scale(var(--fish-scale, 1))
-      transition: transform 0.45s ease, opacity 0.45s ease
-      will-change: auto
-
-      &:hover
-        --fish-scale: 1.12 !important
-        opacity: 1 !important
-        z-index: 600 !important
