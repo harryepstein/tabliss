@@ -4,7 +4,7 @@ import { getConfig } from "../../../plugins";
 import Plugin from "../../shared/Plugin";
 import Widget from "../Widget";
 import "./Aquarium.sass";
-import { applyFish, Fish, seedFish, step } from "./engine";
+import { Fish, makeEnv, seedFish, swimFish } from "./engine";
 
 type Props = {
   widgets: WidgetState[];
@@ -144,11 +144,11 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
       const cfg = configRef.current;
       const W = container.clientWidth;
       const H = container.clientHeight;
+      const env = makeEnv(fishes.current.values(), t);
       fishes.current.forEach((fish) => {
         const el = elements.current.get(fish.id);
         if (!el) return;
-        step(fish, cfg, W, H, dt, t);
-        applyFish(el, fish, cfg, t);
+        swimFish(el, fish, cfg, W, H, dt, t, env);
       });
       raf = requestAnimationFrame(frame);
     };

@@ -1,24 +1,30 @@
 import { AquariumConfig, WidgetPosition } from "../../../db/state";
 
 /**
- * The aquarium motion engine.
+ * The aquarium motion engine — a port of aquarium-brain's 3D swim loop.
  *
- * Each widget becomes a "fish" with a position, heading and depth. Every frame
- * it steers toward a smoothly wandering target heading (a sum of out-of-phase
- * sines, so the path meanders organically rather than oscillating), eases away
- * from the tank walls, and swims forward at a constant speed scaled by its
- * depth so distant widgets drift slower (parallax). Hovering or focusing a
- * widget "summons" it: motion eases to a stop and it rises to the front so it
- * can be read or interacted with — the tabliss analogue of aquarium-brain's
- * `summon` command.
+ * The tank is a CSS `perspective` box (see Aquarium.sass), so the z axis is
+ * genuine depth: each widget is a "fish" with a real 3D position (x, y, z) and
+ * velocity, steered by layered sines and bouncing off the six walls. Far
+ * widgets recede with true perspective (smaller, dimmer) and near ones loom;
+ * they sort by their actual z. Widgets bank — yaw/pitch/roll — toward their
+ * travel direction. A slow tank-wide current nudges everything. Hover / focus /
+ * tap "summons" a widget: it eases forward to face the viewer, brightens and
+ * holds still to be read, while the rest dim back.
  *
- * The maths lives here as plain functions operating on mutable `Fish` records;
- * the renderer owns the requestAnimationFrame loop and the DOM writes.
+ * The maths lives here as plain functions over mutable `Fish` records; the
+ * renderer owns the requestAnimationFrame loop and the DOM writes.
  */
 
 const TAU = Math.PI * 2;
+const DEG = 180 / Math.PI;
+/** Near clip, just behind the glass; the far wall sits at -cfg.depth. */
+const ZMAX = 90;
+/** How far forward a summoned widget swims to present itself. */
+const FOCUS_Z = 130;
+
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 
 /** Where each starting position seeds a fish, as a fraction of the tank. */
 const ANCHORS: Record<WidgetPosition, [number, number]> = {
@@ -40,45 +46,64 @@ export type Fish = {
   anchorY: number;
   /** Set true once placed into pixel space on the first frame */
   placed: boolean;
-  /** Centre position, in tank pixels */
+  /** Top-left position in tank pixels; z is depth (-depth .. ZMAX) */
   x: number;
   y: number;
-  /** Depth, 0 (far) .. 1 (near/front) */
   z: number;
-  /** Travel direction, radians */
-  heading: number;
+  /** 3D velocity */
+  vx: number;
+  vy: number;
+  vz: number;
+  /** Current and per-fish target swim speed */
+  speed: number;
+  speedFactor: number;
   /** Measured size, kept current by a ResizeObserver */
   w: number;
   h: number;
-  /** Time (s) the fish was first placed, for the intro fade-in */
-  born: number;
-  // Per-fish wander seeds, so no two widgets swim alike.
-  s1: number;
-  s2: number;
-  s3: number;
-  f1: number;
-  f2: number;
-  zPhase: number;
-  zFreq: number;
-  // Interaction state.
+  // Per-fish steering wander (frequencies + phases), so no two swim alike.
+  sfx: number;
+  sfy: number;
+  sfz: number;
+  spx: number;
+  spy: number;
+  spz: number;
+  // Per-fish rotation wobble.
+  wrx: number;
+  wry: number;
+  wrz: number;
+  pwx: number;
+  pwy: number;
+  pwz: number;
+  // Breathing (subtle scale pulse).
+  bs: number;
+  bf: number;
+  bp: number;
+  /** Summon blend, eased 0..1 */
+  fb: number;
+  /** Eased opacity */
+  aop: number;
+  // Interaction.
   hover: boolean;
   focused: boolean;
   /** Sticky summon, toggled by tapping on touch devices */
   pinned: boolean;
-  /** Current summon amount, 0..1 (eased) */
-  engage: number;
   /** Summon target, 0 or 1 */
   engageTarget: number;
-  // Last values written to the DOM, so unchanged styles are not rewritten.
-  lastBlur: number;
+  /** Last opacity written to the DOM, so unchanged values are not rewritten */
   lastOpacity: number;
-  lastZIndex: number;
 };
 
-const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+export type SwimEnv = { curX: number; curZ: number; someone: boolean };
 
 export function seedFish(id: string, position: WidgetPosition): Fish {
   const [ax, ay] = ANCHORS[position] ?? [0.5, 0.5];
+  const ang = rand(0, TAU);
+  const pitch = (Math.random() - 0.5) * 1.1;
+  const speedFactor = 0.7 + Math.random() * 0.6;
+  const speed = 40 * speedFactor;
+  const ch = Math.cos(ang);
+  const sh = Math.sin(ang);
+  const cz = Math.cos(pitch);
   return {
     id,
     anchorX: ax,
@@ -86,153 +111,157 @@ export function seedFish(id: string, position: WidgetPosition): Fish {
     placed: false,
     x: 0,
     y: 0,
-    z: rand(0.4, 0.8),
-    heading: rand(0, TAU),
+    z: 0,
+    vx: ch * cz * speed,
+    vy: Math.sin(pitch) * speed * 0.6,
+    vz: sh * cz * speed,
+    speed,
+    speedFactor,
     w: 0,
     h: 0,
-    born: 0,
-    s1: rand(0, TAU),
-    s2: rand(0, TAU),
-    s3: rand(0, TAU),
-    f1: rand(0.08, 0.18),
-    f2: rand(0.13, 0.27),
-    zPhase: rand(0, TAU),
-    // Depth oscillation: ~16-31s per near<->far cycle, so the change is
-    // actually perceptible rather than taking minutes.
-    zFreq: rand(0.2, 0.4),
+    sfx: TAU / (7 + Math.random() * 6),
+    sfy: TAU / (8 + Math.random() * 6),
+    sfz: TAU / (9 + Math.random() * 7),
+    spx: rand(0, TAU),
+    spy: rand(0, TAU),
+    spz: rand(0, TAU),
+    wrx: TAU / (5 + Math.random() * 4),
+    wry: TAU / (6 + Math.random() * 4),
+    wrz: TAU / (4 + Math.random() * 4),
+    pwx: rand(0, TAU),
+    pwy: rand(0, TAU),
+    pwz: rand(0, TAU),
+    bs: 0.013 + Math.random() * 0.013,
+    bf: TAU / (8 + Math.random() * 6),
+    bp: rand(0, TAU),
+    fb: 0,
+    aop: 1,
     hover: false,
     focused: false,
     pinned: false,
-    engage: 0,
     engageTarget: 0,
-    lastBlur: -1,
     lastOpacity: -1,
-    lastZIndex: -1,
   };
 }
 
-/** Smallest signed rotation from `a` to `b`, in (-PI, PI]. */
-function shortAngle(a: number, b: number): number {
-  return ((((b - a + Math.PI) % TAU) + TAU) % TAU) - Math.PI;
+/** Per-frame shared state: the tank current and whether anything is summoned. */
+export function makeEnv(fishes: Iterable<Fish>, t: number): SwimEnv {
+  const amp = 7;
+  const wc = TAU / 55;
+  let someone = false;
+  for (const f of fishes) {
+    if (f.engageTarget > 0) {
+      someone = true;
+      break;
+    }
+  }
+  return { curX: amp * Math.cos(t * wc), curZ: amp * Math.sin(t * wc), someone };
 }
 
-/** Advance one fish by `dt` seconds. `t` is elapsed seconds since the loop began. */
-export function step(
+/**
+ * Advance one fish by `dt` seconds (`t` is elapsed seconds) and write its 3D
+ * transform + opacity straight to the element.
+ */
+export function swimFish(
+  el: HTMLElement,
   f: Fish,
   cfg: AquariumConfig,
   W: number,
   H: number,
   dt: number,
   t: number,
+  env: SwimEnv,
 ): void {
+  const depth = cfg.depth || 640;
+  const ZMIN = -depth;
+  const steerK = (cfg.steer || 20) / 20;
+  const spread = cfg.spread == null ? 0.12 : cfg.spread;
+
   if (!f.placed) {
-    f.x = f.anchorX * W;
-    f.y = f.anchorY * H;
-    f.born = t;
+    f.x = f.anchorX * W - f.w / 2;
+    f.y = f.anchorY * H - f.h / 2;
+    f.z = ZMIN + Math.random() * (ZMAX - ZMIN);
     f.placed = true;
   }
 
-  // Ease the summon amount toward its target (hover / focus).
-  f.engage += (f.engageTarget - f.engage) * (1 - Math.exp(-dt * 9));
+  // Ease swim speed toward this fish's share of the configured speed.
+  f.speed += ((cfg.speed || 40) * f.speedFactor - f.speed) * 0.05;
 
-  // Depth gently bobs; a summoned fish rises fully to the front.
-  const baseZ = 0.5 + 0.5 * Math.sin(t * f.zFreq + f.zPhase);
-  f.z = lerp(baseZ, 1, f.engage);
+  // Steer the heading with layered sines, then renormalise to a constant speed.
+  f.vx += Math.sin(t * f.sfx + f.spx) * 22 * steerK * dt;
+  f.vy += Math.cos(t * f.sfy + f.spy) * 15 * steerK * dt;
+  f.vz += Math.sin(t * f.sfz + f.spz) * 20 * steerK * dt;
+  const mag = Math.hypot(f.vx, f.vy, f.vz) || 1;
+  f.vx = (f.vx / mag) * f.speed;
+  f.vy = (f.vy / mag) * f.speed;
+  f.vz = (f.vz / mag) * f.speed;
 
-  // A smoothly wandering target heading.
-  const wander =
-    TAU *
-    (Math.sin(t * f.f1 + f.s1) +
-      0.5 * Math.sin(t * f.f2 + f.s2) +
-      0.25 * Math.sin(t * f.f1 * 0.5 + f.s3));
+  // Freeze swimming the instant a widget is summoned, so it holds still to be
+  // read instead of drifting out from under the pointer.
+  const move = f.engageTarget ? 0 : 1;
+  f.x += (f.vx + env.curX) * dt * move;
+  f.y += f.vy * dt * move;
+  f.z += (f.vz + env.curZ) * dt * move;
 
-  // Soft tank walls: the roam box extends `spread` past each edge. As a fish
-  // nears a wall, bias its heading back toward open water.
-  const halfW = f.w / 2;
-  const halfH = f.h / 2;
-  const marginX = cfg.spread * W;
-  const marginY = cfg.spread * H;
-  const loX = halfW - marginX;
-  const hiX = W - halfW + marginX;
-  const loY = halfH - marginY;
-  const hiY = H - halfH + marginY;
-  const padX = Math.max(48, W * 0.14);
-  const padY = Math.max(48, H * 0.14);
-
-  let pushX = 0;
-  let pushY = 0;
-  if (f.x < loX + padX) pushX = (loX + padX - f.x) / padX;
-  else if (f.x > hiX - padX) pushX = -(f.x - (hiX - padX)) / padX;
-  if (f.y < loY + padY) pushY = (loY + padY - f.y) / padY;
-  else if (f.y > hiY - padY) pushY = -(f.y - (hiY - padY)) / padY;
-
-  let target = wander;
-  const pushMag = Math.hypot(pushX, pushY);
-  if (pushMag > 0.001) {
-    const inward = Math.atan2(pushY, pushX);
-    target = wander + shortAngle(wander, inward) * clamp(pushMag, 0, 1);
+  // Bounce off the six tank walls (roam box extends `spread` past each edge).
+  const ox = W * spread;
+  const oy = H * spread;
+  const minX = -ox;
+  const maxX = W - f.w + ox;
+  const minY = -oy;
+  const maxY = H - f.h + oy;
+  if (f.x < minX) {
+    f.x = minX;
+    f.vx = Math.abs(f.vx);
+  } else if (f.x > maxX) {
+    f.x = maxX;
+    f.vx = -Math.abs(f.vx);
+  }
+  if (f.y < minY) {
+    f.y = minY;
+    f.vy = Math.abs(f.vy);
+  } else if (f.y > maxY) {
+    f.y = maxY;
+    f.vy = -Math.abs(f.vy);
+  }
+  if (f.z < ZMIN) {
+    f.z = ZMIN;
+    f.vz = Math.abs(f.vz);
+  } else if (f.z > ZMAX) {
+    f.z = ZMAX;
+    f.vz = -Math.abs(f.vz);
   }
 
-  // Rotate toward the target, capped by the steering strength.
-  const maxTurn = (0.35 + cfg.steer * 0.05) * dt;
-  f.heading += clamp(shortAngle(f.heading, target), -maxTurn, maxTurn);
-  f.heading %= TAU;
+  // Bank toward the travel direction, like a fish, plus a little idle wobble.
+  const fry =
+    clamp(Math.atan2(f.vx, Math.abs(f.vz) + 40) * DEG * 0.85, -44, 44) +
+    3 * Math.sin(t * f.wry + f.pwy);
+  const frx =
+    clamp(-Math.atan2(f.vy, Math.abs(f.vz) + 40) * DEG * 0.85, -34, 34) +
+    2.5 * Math.sin(t * f.wrx + f.pwx);
+  const frz = clamp(-f.vx * 0.42, -18, 18) + 3 * Math.sin(t * f.wrz + f.pwz);
+  const fsc = 1 + f.bs * Math.sin(t * f.bf + f.bp);
+  const zN = (f.z - ZMIN) / (ZMAX - ZMIN);
 
-  // Swim forward: constant speed, slowed by depth (parallax) and stilled while
-  // summoned so the widget holds steady to be read. Gating on the target (not
-  // the eased value) freezes the widget the instant it is summoned, so it does
-  // not drift out from under the pointer while the rest of the summon eases in.
-  const swim =
-    cfg.speed * lerp(0.45, 1, f.z) * (f.engageTarget ? 0 : 1 - f.engage);
-  f.x += Math.cos(f.heading) * swim * dt;
-  f.y += Math.sin(f.heading) * swim * dt;
+  // Summon: ease forward to present, flatten to face the viewer, brighten.
+  f.fb += (f.engageTarget - f.fb) * 0.1;
+  const b = f.fb;
+  const pz = f.z + (FOCUS_Z - f.z) * b;
+  const RX = frx * (1 - b);
+  const RY = fry * (1 - b);
+  const RZ = frz * (1 - b);
+  const SC = fsc + (1.16 - fsc) * b;
+  const targetOp = f.engageTarget ? 1 : env.someone ? 0.5 : 0.3 + 0.7 * zN;
+  f.aop += (targetOp - f.aop) * 0.08;
 
-  // Hard stop at the roam box, as a safety net for resizes.
-  f.x = clamp(f.x, Math.min(loX, hiX), Math.max(loX, hiX));
-  f.y = clamp(f.y, Math.min(loY, hiY), Math.max(loY, hiY));
-}
+  el.style.transform =
+    `translate3d(${f.x.toFixed(1)}px,${f.y.toFixed(1)}px,${pz.toFixed(1)}px) ` +
+    `rotateX(${RX.toFixed(2)}deg) rotateY(${RY.toFixed(2)}deg) rotateZ(${RZ.toFixed(2)}deg) ` +
+    `scale(${SC.toFixed(3)})`;
 
-/** Derive visuals from a fish's depth/summon state and write them to the DOM. */
-export function applyFish(
-  el: HTMLElement,
-  f: Fish,
-  cfg: AquariumConfig,
-  t: number,
-): void {
-  const par = clamp(cfg.depth / 1280, 0, 0.85);
-  const intro = clamp((t - f.born) * 1.6, 0, 1);
-
-  // Depth parallax. Near (z->1): large, sharp, fully opaque, drawn on top.
-  // Far (z->0): noticeably smaller, dimmer and blurred, so the tank reads as 3D.
-  const depthScale = lerp(1 - par * 0.85, 1.08, f.z);
-  const scale = depthScale * (1 + 0.06 * f.engage) * lerp(0.9, 1, intro);
-  const opacity = lerp(1 - par * 0.8, 1, f.z) * intro;
-  const blur = (1 - f.z) * par * 4.5 * (1 - f.engage);
-  const zIndex = 1 + Math.round(f.z * 200) + Math.round(f.engage * 500);
-
-  // Position changes essentially every frame, so always rewrite the transform.
-  const tx = f.x - f.w / 2;
-  const ty = f.y - f.h / 2;
-  el.style.transform = `translate3d(${tx.toFixed(2)}px, ${ty.toFixed(2)}px, 0) scale(${scale.toFixed(3)})`;
-
-  // Opacity, blur and z-index change slowly (or rarely). Quantise them and only
-  // write when the value actually changes. This matters most for blur: an
-  // animated filter re-rasterises the layer every frame, so collapsing it to a
-  // few discrete levels keeps each rasterised layer reusable across frames.
-  const qOpacity = Math.round(opacity * 100) / 100;
-  if (qOpacity !== f.lastOpacity) {
-    el.style.opacity = qOpacity.toFixed(2);
-    f.lastOpacity = qOpacity;
-  }
-
-  const qBlur = blur > 0.05 ? Math.round(blur * 4) / 4 : 0;
-  if (qBlur !== f.lastBlur) {
-    el.style.filter = qBlur > 0 ? `blur(${qBlur}px)` : "";
-    f.lastBlur = qBlur;
-  }
-
-  if (zIndex !== f.lastZIndex) {
-    el.style.zIndex = String(zIndex);
-    f.lastZIndex = zIndex;
+  const op = Math.round(f.aop * 100) / 100;
+  if (op !== f.lastOpacity) {
+    el.style.opacity = op.toFixed(2);
+    f.lastOpacity = op;
   }
 }

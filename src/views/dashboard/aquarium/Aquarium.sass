@@ -1,17 +1,22 @@
 .Aquarium
   position: absolute
   inset: 0
-  // Establish a stacking context so per-fish z-index never escapes above the
-  // Overlay chrome.
   z-index: 0
   // Clicks fall through the gaps between widgets, like the classic slot layout.
   pointer-events: none
+  // A real 3D tank: children are positioned in depth (translateZ) and sorted by
+  // their true z, so far widgets recede with genuine perspective.
+  perspective: 900px
+  perspective-origin: 50% 46%
+  transform-style: preserve-3d
 
   .Fish
     position: absolute
     top: 0
     left: 0
     transform-origin: center center
+    transform-style: preserve-3d
+    backface-visibility: hidden
     pointer-events: auto
     text-align: center
     max-width: 80vw
