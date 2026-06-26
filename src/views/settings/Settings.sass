@@ -1,3 +1,5 @@
+@use "sass:color"
+
 .Settings
     h1
         margin: 2rem 0
@@ -87,16 +89,16 @@
         &--primary
             background-color: #3498db
             &:hover
-                background: darken(#3498db, 10%)
+                background: color.adjust(#3498db, $lightness: -10%)
             &:active
-                background: darken(#3498db, 20%)
+                background: color.adjust(#3498db, $lightness: -20%)
 
         &--secondary
-            background: darken(#bdc3c7, 20%)
+            background: color.adjust(#bdc3c7, $lightness: -20%)
             &:hover
-                background: darken(#bdc3c7, 30%)
+                background: color.adjust(#bdc3c7, $lightness: -30%)
             &:active
-                background: darken(#bdc3c7, 40%)
+                background: color.adjust(#bdc3c7, $lightness: -40%)
 
     hr
         border: 1px solid #ecf0f1
@@ -124,4 +126,4 @@
         padding: 0.5em
 
         &:hover
-            background-color: darken(#3498db, 20%) !important
+            background-color: color.adjust(#3498db, $lightness: -20%) !important

@@ -43,7 +43,15 @@ const config = {
       },
       {
         test: /\.sass$/,
-        use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
+        use: [
+          MiniCssExtractPlugin.loader,
+          "css-loader",
+          {
+            loader: "sass-loader",
+            // Use Dart Sass's modern API; the legacy JS API is deprecated.
+            options: { api: "modern" },
+          },
+        ],
       },
       {
         test: /\.svg$/,
@@ -84,6 +92,16 @@ const config = {
   devtool: isWeb || !isProduction ? "source-map" : false,
   stats: {
     warnings: false,
+  },
+  devServer: {
+    // Don't let (non-fatal) build warnings take over the page in an overlay;
+    // real errors still show.
+    client: {
+      overlay: {
+        errors: true,
+        warnings: false,
+      },
+    },
   },
 };
 
