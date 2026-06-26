@@ -1,7 +1,67 @@
-.Aquarium
+// The aquarium scene: flat atmosphere layers (kept out of the perspective box so
+// they don't interleave with the 3D fish) stacked behind and in front of the
+// tank — vignette (1) < bubbles (2) < tank/widgets (3) < grain (5).
+.AquariumScene
   position: absolute
   inset: 0
   z-index: 0
+  pointer-events: none
+  overflow: hidden
+
+// Depth vignette: darkens toward the edges so the tank reads as deep.
+.aq-vignette
+  position: absolute
+  inset: 0
+  z-index: 1
+  pointer-events: none
+  background: radial-gradient(120% 92% at 50% -10%, transparent 45%, rgba(0, 0, 6, 0.34) 100%)
+
+.aq-bubbles
+  position: absolute
+  inset: 0
+  z-index: 2
+  pointer-events: none
+
+.aq-bubble
+  position: absolute
+  bottom: -30px
+  border-radius: 50%
+  pointer-events: none
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.04) 68%)
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.12)
+  animation-name: aq-rise
+  animation-timing-function: ease-in
+  animation-iteration-count: infinite
+
+@keyframes aq-rise
+  0%
+    transform: translate(0, 0) scale(0.9)
+    opacity: 0
+  10%
+    opacity: var(--bo, 0.4)
+  40%
+    transform: translate(10px, -40vh) scale(1.05)
+  72%
+    transform: translate(-8px, -72vh) scale(1.12)
+    opacity: var(--bo, 0.4)
+  100%
+    transform: translate(5px, -110vh) scale(1.18)
+    opacity: 0
+
+// Very faint film grain over everything, for cohesion.
+.aq-grain
+  position: absolute
+  inset: 0
+  z-index: 5
+  pointer-events: none
+  opacity: 0.04
+  mix-blend-mode: overlay
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")
+
+.Aquarium
+  position: absolute
+  inset: 0
+  z-index: 3
   // Clicks fall through the gaps between widgets, like the classic slot layout.
   pointer-events: none
   // A real 3D tank: children are positioned in depth (translateZ) and sorted by

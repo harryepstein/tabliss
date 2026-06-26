@@ -156,8 +156,41 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // A handful of bubbles drifting up behind the widgets, animated purely in CSS.
+  const bubbles = React.useMemo(
+    () =>
+      Array.from({ length: 14 }, () => ({
+        left: 4 + Math.random() * 92,
+        size: 4 + Math.random() * 8,
+        dur: 12 + Math.random() * 12,
+        delay: -Math.random() * 22,
+        alpha: 0.16 + Math.random() * 0.28,
+      })),
+    [],
+  );
+
   return (
-    <div ref={containerRef} className="Aquarium">
+    <div className="AquariumScene">
+      <div className="aq-vignette" />
+      <div className="aq-bubbles">
+        {bubbles.map((b, i) => (
+          <div
+            key={i}
+            className="aq-bubble"
+            style={
+              {
+                left: `${b.left}%`,
+                width: b.size,
+                height: b.size,
+                animationDuration: `${b.dur}s`,
+                animationDelay: `${b.delay}s`,
+                "--bo": b.alpha,
+              } as React.CSSProperties
+            }
+          />
+        ))}
+      </div>
+      <div ref={containerRef} className="Aquarium">
       {widgets.map(({ display, id, key }) => (
         <div
           key={id}
@@ -180,6 +213,8 @@ const Aquarium: React.FC<Props> = ({ widgets, config }) => {
           </Widget>
         </div>
       ))}
+      </div>
+      <div className="aq-grain" />
     </div>
   );
 };
