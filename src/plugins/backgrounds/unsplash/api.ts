@@ -45,6 +45,20 @@ export const fetchImages = async ({
   const res = await fetch(`${url}?${params}`, { headers, cache: "no-cache" });
   const body = await res.json();
 
+  // Unsplash returns an error object (not an array) when the request fails —
+  // most often because no UNSPLASH_API_KEY is baked into the build (local dev
+  // without a .env), or because the rate limit was hit. Degrade gracefully
+  // instead of throwing, which would otherwise surface as an uncaught error.
+  if (!res.ok || !Array.isArray(body)) {
+    const reason = !UNSPLASH_API_KEY
+      ? "no UNSPLASH_API_KEY is set — add one to your .env to use the Unsplash background"
+      : Array.isArray(body?.errors)
+        ? body.errors.join(", ")
+        : `request failed (HTTP ${res.status})`;
+    console.warn(`Unsplash background unavailable: ${reason}`);
+    return [];
+  }
+
   // TODO: validate types
 
   return body.map((item: any) => ({
